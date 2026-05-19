@@ -168,6 +168,38 @@ graph TD
 
 > **Design Decision:** The AI server uses a fixed model trained on synthetic (mock) data for demo stability. The retrain pipeline exists to demonstrate the complete MLOps architecture, but real Prometheus data lacks sufficient seasonality for accurate predictions in a lab environment.
 
+## 🗂️ AI Serving Infrastructure (DevOps View)
+
+The AI forecasting component is treated as **just another workload** on the cluster — packaged, deployed, and lifecycle-managed entirely through Kubernetes primitives and GitOps. No manual intervention required.
+
+```mermaid
+graph LR
+    subgraph K8S ["Kubernetes Cluster (boutique namespace)"]
+        direction TB
+        CJ1["⏱ Data Ingestion CronJob\n(Daily)\nQueries Prometheus → appends CSV"]
+        CJ2["⏱ Model Retrain CronJob\n(Weekly)\nRetrains Prophet on latest CSV"]
+        PV[("💾 PersistentVolume\nShared data & model storage")]
+        MLflow["📦 MLflow Deployment\nModel version registry"]
+        Prophet["🚀 Prophet Deployment\nFastAPI · /api/forecast\nReturns predicted RPS"]
+    end
+
+    subgraph INFRA ["Infrastructure Layer"]
+        Prometheus[("📊 Prometheus")]
+        KEDA["⚡ KEDA\nScaledObject · metrics-api trigger\npollInterval: 30s"]
+    end
+
+    Prometheus -->|"Historical RPS data"| CJ1
+    CJ1 -->|"Append dataset"| PV
+    PV -->|"Load training data"| CJ2
+    CJ2 -->|"Save model artifact"| PV
+    PV -->|"Load model on startup"| Prophet
+    CJ2 -->|"Log run & register version"| MLflow
+    Prophet -->|"GET /api/forecast\n→ predicted_rps for next 15 min"| KEDA
+```
+
+> **From a DevOps perspective:** The Prophet model is a black-box REST service. KEDA only cares about the JSON response `{"predicted_rps": <float>}`. Swapping the forecasting algorithm requires zero changes to the autoscaling or infrastructure layer.
+
+
 ## 🔐 Security Design
 
 | Layer | Implementation |
