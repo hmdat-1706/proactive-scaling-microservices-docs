@@ -13,7 +13,7 @@
 
 This project implements a **Proactive Autoscaling Platform** for microservices deployed on a K3s Kubernetes cluster. Unlike traditional reactive scaling (HPA) that responds *after* traffic spikes, this system uses an **AI-powered Prophet model** to **predict future traffic** and scale services *before* demand increases.
 
-The entire platform is managed through **GitOps (ArgoCD)** and provisioned via **Ansible automation**, enabling full cluster bootstrap from bare metal to a production-ready state in a single command.
+The entire platform is managed through **GitOps (ArgoCD)** and provisioned via **Ansible automation**, enabling full cluster bootstrap to a production-ready state with least manunal actions required.
 
 ### Key Highlights
 - **AI-Driven Proactive Scaling** — KEDA polls a FastAPI prediction endpoint to pre-scale services before traffic spikes occur
@@ -178,14 +178,14 @@ graph LR
         direction TB
         CJ1["⏱ Data Ingestion CronJob\n(Daily)\nQueries Prometheus → appends CSV"]
         CJ2["⏱ Model Retrain CronJob\n(Weekly)\nRetrains Prophet on latest CSV"]
-        PV[("💾 PersistentVolume\nShared data & model storage")]
-        MLflow["📦 MLflow Deployment\nModel version registry"]
-        Prophet["🚀 Prophet Deployment\nFastAPI · /api/forecast\nReturns predicted RPS"]
+        PV[("PersistentVolume\nShared data & model storage")]
+        MLflow["MLflow Deployment\nModel version registry"]
+        Prophet["Prophet Deployment\nFastAPI · /api/forecast\nReturns predicted RPS"]
     end
 
     subgraph INFRA ["Infrastructure Layer"]
-        Prometheus[("📊 Prometheus")]
-        KEDA["⚡ KEDA\nScaledObject · metrics-api trigger\npollInterval: 30s"]
+        Prometheus[("Prometheus")]
+        KEDA["KEDA\nScaledObject · metrics-api trigger\npollInterval: 30s"]
     end
 
     Prometheus -->|"Historical RPS data"| CJ1
@@ -238,7 +238,7 @@ graph TD
 
     %% Flow connections
     Dev -->|"1. Run nuke-and-redeploy"| Ansible
-    Ansible -->|"2. Provision bare-metal"| K3s
+    Ansible -->|"2. Setup VMs"| K3s
 
     Dev -->|"3. git push code"| Code
     Code -->|"4. Trigger Workflow"| GHA
