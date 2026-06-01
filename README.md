@@ -44,7 +44,7 @@ The entire platform is managed through **GitOps (ArgoCD)** and provisioned via *
 │       ├── data_ingestion.py    # Daily Prometheus → CSV data pipeline
 │       └── model_retrain.py     # Weekly sliding window retraining
 ├── infra/
-│   ├── ansible/                 # Ansible Best Practices structure
+│   ├── ansible/                 # Ansible
 │   │   ├── inventories/         # Production hosts & group_vars
 │   │   ├── roles/               # common, k3s_server, k3s_agent, bootstrap, post_provision
 │   │   └── site.yaml            # Main entrypoint
@@ -58,7 +58,7 @@ The entire platform is managed through **GitOps (ArgoCD)** and provisioned via *
 │   │   ├── argo-rollouts-app.yaml   # Argo Rollouts Controller (Helm)
 │   │   └── sealed-secrets-app.yaml  # Sealed Secrets Controller (Helm)
 │   ├── autoscaling/
-│   │   └── *-scaledobject.yaml  # ScaledObjects (1 proactive + 7 reactive)
+│   │   └── *-scaledobject.yaml  # ScaledObjects
 │   ├── monitoring/
 │   │   ├── values.yaml          # Grafana + Prometheus + Alertmanager custom values
 │   │   ├── grafana-sealed.yaml  # Encrypted Grafana admin credentials
@@ -71,7 +71,7 @@ The entire platform is managed through **GitOps (ArgoCD)** and provisioned via *
 ## ⚙️ Quick Start — Full Cluster Bootstrap
 
 ### Prerequisites
-- 2 Ubuntu VMs (Master: 8GB RAM, Worker: 2GB RAM) with SSH access
+- 2 Ubuntu VMs (Master: 4GB RAM, Worker: 8GB RAM) with SSH access
 - Ansible installed on your control machine
 - GitHub account with a PAT token for GHCR access
 - Slack Webhook URL for Alertmanager
@@ -99,7 +99,7 @@ ansible-playbook -i inventories/production/hosts site.yaml
 ```
 
 The playbook will:
-1. Install base packages (curl) on all nodes
+1. Install base packages and configuarations on all nodes
 2. Provision K3s control plane + install `kubeseal` CLI
 3. Join worker node to the cluster
 4. Install ArgoCD + apply App-of-Apps manifest (which auto-deploys Helm charts: KEDA, SealedSecrets, Monitoring, Rollouts)
