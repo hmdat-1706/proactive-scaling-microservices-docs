@@ -14,7 +14,7 @@
 
 This project implements a **Proactive Autoscaling Platform** for microservices deployed on a K3s Kubernetes cluster. Unlike traditional reactive scaling (HPA) that responds *after* traffic spikes, this system uses an **AI-powered Prophet model** to **predict future traffic** and scale services *before* demand increases.
 
-The entire platform is managed through **GitOps (ArgoCD)** and provisioned via **Ansible automation** following enterprise best practices, enabling full cluster bootstrap to a production-ready state with minimal manual actions required.
+The entire platform is managed through **GitOps (ArgoCD)** and provisioned via **Ansible automation**, enabling full cluster bootstrap to a production-ready state with minimal manual actions required.
 
 ### Key Highlights
 - **AI-Driven Proactive Scaling** — KEDA polls a FastAPI prediction endpoint to pre-scale services before traffic spikes occur
@@ -31,41 +31,17 @@ The entire platform is managed through **GitOps (ArgoCD)** and provisioned via *
 ## 📂 Repository Structure
 
 ```text
-├── .github/workflows/
-│   ├── ci-ai-scaler.yaml       # CI: Build → Trivy Scan → Push → Update Tag (Dev/Prod)
-│   └── ci-audit.yaml           # Audit: yamllint + Flake8 + Kubeconform
+├── .github/workflows/           # CI/CD GitHub Actions pipelines
 ├── apps/
-│   ├── boutique/
-│   │   └── google_boutique.yaml # Google Online Boutique microservices (8 services)
-│   └── prophet/
-│       ├── manifests/           # Kustomize (base + overlays: dev/production)
-│       ├── Dockerfile           # Non-root Python container
-│       ├── ai_server.py         # FastAPI prediction endpoint (/api/forecast)
-│       ├── data_ingestion.py    # Daily Prometheus → CSV data pipeline
-│       └── model_retrain.py     # Weekly sliding window retraining
+│   ├── boutique/                # Google Online Boutique microservices (Kustomize)
+│   └── prophet/                 # AI Scaler (FastAPI, CronJobs, MLflow, models)
 ├── infra/
-│   ├── ansible/                 # Ansible
-│   │   ├── inventories/         # Production hosts & group_vars
-│   │   ├── roles/               # common, k3s_server, k3s_agent, bootstrap, post_provision
-│   │   └── site.yaml            # Main entrypoint
-│   ├── argocd/                  # App-of-Apps Configuration
-│   │   ├── apps-app.yaml        # App-of-Apps root application
-│   │   ├── boutique-app.yaml    # Boutique microservices
-│   │   ├── prophet-app.yaml     # AI scaler components
-│   │   ├── monitoring-app.yaml  # kube-prometheus-stack (Helm)
-│   │   ├── keda-app.yaml        # KEDA System installation (Helm)
-│   │   ├── autoscaling-app.yaml # KEDA ScaledObjects rules
-│   │   ├── argo-rollouts-app.yaml   # Argo Rollouts Controller (Helm)
-│   │   └── sealed-secrets-app.yaml  # Sealed Secrets Controller (Helm)
-│   ├── autoscaling/
-│   │   └── *-scaledobject.yaml  # ScaledObjects
-│   ├── monitoring/
-│   │   ├── values.yaml          # Grafana + Prometheus + Alertmanager custom values
-│   │   ├── grafana-sealed.yaml  # Encrypted Grafana admin credentials
-│   │   └── slack-sealed.yaml    # Encrypted Slack Webhook URL
-│   └── ingress/                 # Traefik IngressRoutes & Middlewares
-└── load-test/
-    └── quick_test.py            # Locust load testing script
+│   ├── ansible/                 # K3s & ArgoCD cluster bootstrap automation
+│   ├── argocd/                  # GitOps App-of-Apps definitions
+│   ├── autoscaling/             # KEDA ScaledObjects rules
+│   ├── ingress/                 # Traefik IngressRoutes & Middlewares
+│   └── monitoring/              # Prometheus, Grafana, Alertmanager & Sealed Secrets configs
+└── load-test/                   # Locust load testing scripts
 ```
 
 ## ⚙️ Quick Start — Full Cluster Bootstrap
@@ -162,7 +138,7 @@ graph TD
 
 ## 🗂️ AI Serving Infrastructure (DevOps View)
 
-The AI forecasting component is treated as **just another workload** on the cluster — packaged, deployed, and lifecycle-managed entirely through Kubernetes primitives and GitOps. No manual intervention required.
+The AI forecasting component is treated as **just another workload** on the cluster — packaged, deployed, and lifecycle-managed entirely through Kubernetes primitives and GitOps.
 
 ```mermaid
 graph LR
@@ -258,11 +234,11 @@ graph TD
 | Category | Technology |
 |----------|-----------|
 | **Orchestration** | K3s (lightweight Kubernetes) |
-| **GitOps** | ArgoCD (App-of-Apps pattern) |
 | **Progressive Delivery** | Argo Rollouts (Blue/Green Deployment) |
 | **Autoscaling** | KEDA (metrics-api + CPU triggers) |
 | **AI/ML** | Facebook Prophet, MLflow, FastAPI |
-| **CI/CD** | GitHub Actions, Docker Buildx, Kustomize, Trivy |
+| **Continuous Integration** | GitHub Actions, Docker Buildx, Kustomize, Trivy |
+| **Continuous Delivery** | ArgoCD (App-of-Apps pattern), Kustomize |
 | **Monitoring & Alerting**| Prometheus, Grafana, Alertmanager (Slack), Traefik ServiceMonitor |
 | **Security** | Bitnami Sealed Secrets, kubeseal |
 | **IaC** | Ansible |
@@ -273,7 +249,7 @@ graph TD
 
 - **No TLS:** `.local` domains use HTTP only (would use cert-manager + Let's Encrypt in production)
 - **No NetworkPolicy:** All pods can communicate freely within the cluster
-- **Fake MLOps Loop:** In this lab environment, the Retrain CronJob exists to demonstrate the architecture, but the AI Server uses a frozen model pre-trained on clean synthetic data to guarantee stable load testing.
+- **Frozen MLOps Loop:** In this lab environment, the Retrain CronJob exists to demonstrate the architecture, but the AI Server uses a frozen model pre-trained on clean synthetic data to guarantee stable load testing.
 
 ---
 
