@@ -2,6 +2,7 @@
 
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)
 ![ArgoCD](https://img.shields.io/badge/Argo%20CD-1e0b3e?style=for-the-badge&logo=argo&logoColor=#d16044)
+![Argo Rollouts](https://img.shields.io/badge/Argo%20Rollouts-1e0b3e?style=for-the-badge&logo=argo&logoColor=#4cb4e6)
 ![Grafana](https://img.shields.io/badge/Grafana-%23F46800.svg?style=for-the-badge&logo=grafana&logoColor=white)
 ![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=for-the-badge&logo=Prometheus&logoColor=white)
 ![GitHub Actions](https://img.shields.io/badge/github%20actions-%232671E5.svg?style=for-the-badge&logo=githubactions&logoColor=white)
@@ -13,14 +14,15 @@
 
 This project implements a **Proactive Autoscaling Platform** for microservices deployed on a K3s Kubernetes cluster. Unlike traditional reactive scaling (HPA) that responds *after* traffic spikes, this system uses an **AI-powered Prophet model** to **predict future traffic** and scale services *before* demand increases.
 
-The entire platform is managed through **GitOps (ArgoCD)** and provisioned via **Ansible automation**, enabling full cluster bootstrap to a production-ready state with least manunal actions required.
+The entire platform is managed through **GitOps (ArgoCD)** and provisioned via **Ansible automation** following enterprise best practices, enabling full cluster bootstrap to a production-ready state with minimal manual actions required.
 
 ### Key Highlights
 - **AI-Driven Proactive Scaling** — KEDA polls a FastAPI prediction endpoint to pre-scale services before traffic spikes occur
-- **GitOps (ArgoCD App-of-Apps)** — Single bootstrap point for the entire infrastructure with automated synchronization
+- **GitOps (ArgoCD App-of-Apps)** — Single bootstrap point for the entire infrastructure with automated synchronization and multi-environment (Dev/Prod) support via Kustomize
+- **Zero-Downtime CD** — Blue/Green deployment strategy powered by Argo Rollouts
 - **DevSecOps Pipeline** — GitHub Actions with Trivy vulnerability scanning, yamllint, kubeconform, and Flake8
 - **Zero Plaintext Secrets** — Bitnami Sealed Secrets with automated certificate retrieval and encryption via Ansible
-- **Full Observability** — kube-prometheus-stack with custom Traefik ServiceMonitor for RPS metrics
+- **Full Observability & Alerting** — kube-prometheus-stack with custom Traefik RPS metrics, PrometheusRules, and automated Slack notifications for critical alerts
 
 ## 🏗️ Architecture
 
@@ -30,46 +32,38 @@ The entire platform is managed through **GitOps (ArgoCD)** and provisioned via *
 
 ```text
 ├── .github/workflows/
-│   ├── ci-ai-scaler.yaml       # CI: Build → Trivy Scan → Push → Update Tag
-│   └── audit-ci.yaml           # Audit: yamllint + Flake8 + Kubeconform
+│   ├── ci-ai-scaler.yaml       # CI: Build → Trivy Scan → Push → Update Tag (Dev/Prod)
+│   └── ci-audit.yaml           # Audit: yamllint + Flake8 + Kubeconform
 ├── apps/
 │   ├── boutique/
 │   │   └── google_boutique.yaml # Google Online Boutique microservices (8 services)
 │   └── prophet/
+│       ├── manifests/           # Kustomize (base + overlays: dev/production)
 │       ├── Dockerfile           # Non-root Python container
 │       ├── ai_server.py         # FastAPI prediction endpoint (/api/forecast)
 │       ├── data_ingestion.py    # Daily Prometheus → CSV data pipeline
-│       ├── model_retrain.py     # Weekly sliding window retraining
-│       ├── requirements.txt     # Pinned Python dependencies
-│       ├── ai-scaler-architecture.yaml  # CronJobs + Deployment + Service
-│       ├── ai-configmap.yaml    # Environment configuration
-│       ├── mlflow-server.yaml   # MLflow Tracking Server
-│       ├── ghcr_sealed.yaml     # Encrypted GHCR registry credentials
-│       ├── data/                # Mock datasets for Prophet training
-│       └── prophet_model/       # Baked-in Prophet model artifact
+│       └── model_retrain.py     # Weekly sliding window retraining
 ├── infra/
-│   ├── ansible/
-│   │   ├── playbook.yaml        # End-to-end cluster provisioning (5 steps)
-│   │   ├── hosts.ini            # Inventory (master + worker)
-│   │   └── ansible.cfg
-│   ├── argocd/
-│   │   ├── argocd-app.yaml      # App-of-Apps root application
-│   │   ├── boutique-app.yaml    # Boutique microservices (with ignoreDifferences)
+│   ├── ansible/                 # Ansible Best Practices structure
+│   │   ├── inventories/         # Production hosts & group_vars
+│   │   ├── roles/               # common, k3s_server, k3s_agent, bootstrap, post_provision
+│   │   └── site.yaml            # Main entrypoint
+│   ├── argocd/                  # App-of-Apps Configuration
+│   │   ├── apps-app.yaml        # App-of-Apps root application
+│   │   ├── boutique-app.yaml    # Boutique microservices
 │   │   ├── prophet-app.yaml     # AI scaler components
 │   │   ├── monitoring-app.yaml  # kube-prometheus-stack (Helm)
-│   │   ├── keda-app.yaml        # KEDA ScaledObjects
-│   │   ├── ingress-app.yaml     # Traefik Ingress rules
-│   │   └── sealed-secrets-app.yaml  # Sealed Secrets controller (Helm)
+│   │   ├── keda-app.yaml        # KEDA System installation (Helm)
+│   │   ├── autoscaling-app.yaml # KEDA ScaledObjects rules
+│   │   ├── argo-rollouts-app.yaml   # Argo Rollouts Controller (Helm)
+│   │   └── sealed-secrets-app.yaml  # Sealed Secrets Controller (Helm)
 │   ├── autoscaling/
-│   │   └── keda_hpa.yaml        # 8 ScaledObjects (1 proactive + 7 reactive)
+│   │   └── *-scaledobject.yaml  # ScaledObjects (1 proactive + 7 reactive)
 │   ├── monitoring/
-│   │   ├── values.yaml          # Grafana + Prometheus custom values
-│   │   └── grafana-sealed.yaml  # Encrypted Grafana admin credentials
-│   └── ingress/
-│       ├── boutique-ingress.yaml       # web.local, api.local, mlflow.local
-│       ├── monitoring-ingress.yaml     # grafana.local
-│       ├── argocd-ingress.yaml         # argocd.local
-│       └── traefik-metrics-config.yaml # ServiceMonitor for Traefik RPS
+│   │   ├── values.yaml          # Grafana + Prometheus + Alertmanager custom values
+│   │   ├── grafana-sealed.yaml  # Encrypted Grafana admin credentials
+│   │   └── slack-sealed.yaml    # Encrypted Slack Webhook URL
+│   └── ingress/                 # Traefik IngressRoutes & Middlewares
 └── load-test/
     └── quick_test.py            # Locust load testing script
 ```
@@ -80,33 +74,36 @@ The entire platform is managed through **GitOps (ArgoCD)** and provisioned via *
 - 2 Ubuntu VMs (Master: 8GB RAM, Worker: 2GB RAM) with SSH access
 - Ansible installed on your control machine
 - GitHub account with a PAT token for GHCR access
+- Slack Webhook URL for Alertmanager
 
 ### 1. Configure Inventory
 
-Edit `infra/ansible/hosts.ini` with your VM IPs:
+Edit `infra/ansible/inventories/production/hosts` with your VM IPs:
 ```ini
 [master]
-<MASTER_IP> ansible_user=<USER> ansible_ssh_private_key_file=~/.ssh/id_rsa
+<MASTER_IP>
 
 [worker]
-<WORKER_IP> ansible_user=<USER> ansible_ssh_private_key_file=~/.ssh/id_rsa
+<WORKER_IP>
+
+[k3s_cluster:children]
+master
+worker
 ```
 
 ### 2. Run the Playbook
 
 ```bash
 cd infra/ansible
-ansible-playbook playbook.yaml
+ansible-playbook -i inventories/production/hosts site.yaml
 ```
 
 The playbook will:
 1. Install base packages (curl) on all nodes
 2. Provision K3s control plane + install `kubeseal` CLI
 3. Join worker node to the cluster
-4. Install KEDA + ArgoCD + apply App-of-Apps manifest
-5. Prompt for credentials → wait for ArgoCD to sync Sealed Secrets → encrypt and apply GHCR & Grafana secrets → set ArgoCD admin password
-
-> **Note:** Step 5 polls for the `sealed-secrets-controller` deployment in `kube-system` with a 10-minute timeout before proceeding to allow ArgoCD enough time to sync. Sensitive values are protected with `no_log: true` during execution.
+4. Install ArgoCD + apply App-of-Apps manifest (which auto-deploys Helm charts: KEDA, SealedSecrets, Monitoring, Rollouts)
+5. Prompt for credentials → wait for ArgoCD to sync Sealed Secrets → encrypt and apply GHCR, Grafana, and Slack Webhook secrets → set ArgoCD admin password
 
 ### 3. Verify Deployment
 
@@ -117,11 +114,8 @@ k3s kubectl get applications -n argocd
 # Check all pods
 k3s kubectl get pods -A
 
-# Verify sealed-secrets controller is running
-k3s kubectl get deployment sealed-secrets-controller -n kube-system
-
 # Access services (add to /etc/hosts)
-# <MASTER_IP> web.local grafana.local argocd.local api.local mlflow.local
+# <MASTER_IP> web.local grafana.local argocd.local api.local mlflow.local rollouts.local
 ```
 
 ## 🤖 How Proactive Scaling Works
@@ -166,8 +160,6 @@ graph TD
     HPA -->|"Scale UP before traffic hits"| Pods
 ```
 
-> **Design Decision:** The AI server uses a fixed model trained on synthetic (mock) data for demo stability. The retrain pipeline exists to demonstrate the complete MLOps architecture, but real Prometheus data lacks sufficient seasonality for accurate predictions in a lab environment.
-
 ## 🗂️ AI Serving Infrastructure (DevOps View)
 
 The AI forecasting component is treated as **just another workload** on the cluster — packaged, deployed, and lifecycle-managed entirely through Kubernetes primitives and GitOps. No manual intervention required.
@@ -197,9 +189,6 @@ graph LR
     Prophet -->|"GET /api/forecast\n→ predicted_rps for next 15 min"| KEDA
 ```
 
-> **From a DevOps perspective:** The Prophet model is a black-box REST service. KEDA only cares about the JSON response `{"predicted_rps": <float>}`. Swapping the forecasting algorithm requires zero changes to the autoscaling or infrastructure layer.
-
-
 ## 🔐 Security Design
 
 | Layer | Implementation |
@@ -207,13 +196,14 @@ graph LR
 | **Container Registry** | Sealed Secret (`ghcr_sealed.yaml`) — asymmetric encryption |
 | **Grafana Admin** | Sealed Secret via Ansible `vars_prompt` — no plaintext in Git |
 | **ArgoCD Admin** | bcrypt-hashed password via Ansible `vars_prompt` — patched at provision time |
+| **Alertmanager Slack Webhook** | Sealed Secret via Ansible `vars_prompt` — automated routing |
 | **Container Runtime** | Non-root user (UID 1000) + Pod `securityContext` |
 | **CI Pipeline** | Trivy scan blocks CRITICAL/HIGH vulnerabilities |
 | **Code Quality** | Flake8 (Python) + yamllint (YAML) + Kubeconform (K8s schemas) |
 
 ## 🔄 CI/CD Pipeline & GitOps Workflow
 
-The full lifecycle — from a developer pushing code to pods rolling out — is fully automated and auditable through Git.
+The full lifecycle is fully automated. The CI pipeline checks PRs and builds images on merge, updating Kustomize Overlays. ArgoCD then detects drift and applies changes using Blue/Green deployments for mission-critical services.
 
 ```mermaid
 graph TD
@@ -231,13 +221,14 @@ graph TD
     end
 
     subgraph CD ["Phase 3: CD Pipeline - GitOps"]
-        Manifests["GitHub - K8s Manifests"]
+        Manifests["GitHub - K8s Manifests\n(Kustomize dev/prod overlays)"]
         Argo["ArgoCD Controller"]
+        Rollouts["Argo Rollouts\n(Blue/Green Strategy)"]
         Pods["Microservices Pods"]
     end
 
     %% Flow connections
-    Dev -->|"1. Run nuke-and-redeploy"| Ansible
+    Dev -->|"1. Run playbook"| Ansible
     Ansible -->|"2. Setup VMs"| K3s
 
     Dev -->|"3. git push code"| Code
@@ -246,8 +237,9 @@ graph TD
     GHA -->|"6. Auto-commit new Image Tag"| Manifests
 
     Argo -->|"7. Watch for drift"| Manifests
-    Argo -->|"8. Sync & Apply"| Pods
-    Pods -.->|"9. Pull new Image"| GHCR
+    Argo -->|"8. Sync Manifests"| Rollouts
+    Rollouts -->|"9. Blue/Green Deployment"| Pods
+    Pods -.->|"10. Pull new Image"| GHCR
 ```
 
 ## 📊 Monitoring Access
@@ -257,6 +249,7 @@ graph TD
 | Boutique Shop | `http://web.local` | — |
 | Grafana | `http://grafana.local` | Set during playbook run |
 | ArgoCD | `http://argocd.local` | `admin` / Set during playbook run |
+| Argo Rollouts | `http://rollouts.local` | — |
 | AI Forecast API | `http://api.local/api/forecast` | — |
 | MLflow | `http://mlflow.local` | — |
 
@@ -266,10 +259,11 @@ graph TD
 |----------|-----------|
 | **Orchestration** | K3s (lightweight Kubernetes) |
 | **GitOps** | ArgoCD (App-of-Apps pattern) |
+| **Progressive Delivery** | Argo Rollouts (Blue/Green Deployment) |
 | **Autoscaling** | KEDA (metrics-api + CPU triggers) |
 | **AI/ML** | Facebook Prophet, MLflow, FastAPI |
-| **CI/CD** | GitHub Actions, Docker Buildx, Trivy |
-| **Monitoring** | Prometheus, Grafana, Traefik ServiceMonitor |
+| **CI/CD** | GitHub Actions, Docker Buildx, Kustomize, Trivy |
+| **Monitoring & Alerting**| Prometheus, Grafana, Alertmanager (Slack), Traefik ServiceMonitor |
 | **Security** | Bitnami Sealed Secrets, kubeseal |
 | **IaC** | Ansible |
 | **Ingress** | Traefik (K3s default) |
@@ -277,12 +271,10 @@ graph TD
 
 ## 📝 Known Limitations
 
-- **Single-environment:** No dev/staging separation (lab scope)
 - **No TLS:** `.local` domains use HTTP only (would use cert-manager + Let's Encrypt in production)
-- **No alerting rules:** Prometheus collects metrics but no PrometheusRule CRDs for alerts
 - **No NetworkPolicy:** All pods can communicate freely within the cluster
-- **Fixed AI model:** Production would implement automated model promotion from MLflow
+- **Fake MLOps Loop:** In this lab environment, the Retrain CronJob exists to demonstrate the architecture, but the AI Server uses a frozen model pre-trained on clean synthetic data to guarantee stable load testing.
 
 ---
 
-*This project was developed as a Major Project (Đồ án chuyên ngành) focusing on DevOps Engineering practices.*
+*This project was developed as a Major Project (Đồ án chuyên ngành) focusing on modern DevOps Engineering practices.*
