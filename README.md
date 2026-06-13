@@ -191,13 +191,7 @@ The reactive system collapsed with **502/503 errors while CPU remained below 200
 
 When 2,000 virtual users slammed in over 15 seconds, the single pod's TCP connection queue was immediately overwhelmed. Traditional HPA was blind to this because it only watches CPU, which hadn't risen yet. This "Cold-start penalty" cascaded into a full system collapse.
 
-Proactive Scaling solved this by pre-provisioning pods **before** traffic arrived. With pods scaled up in advance:
-
-```
-
-```
-
-This buffer absorbed the entire spike with **zero errors**.
+Proactive Scaling solved this by pre-provisioning pods **before** traffic arrived. With pods scaled up in advance, this buffer absorbed the entire spike with **zero errors**.
 
 ## 📝 Known Limitations
 
