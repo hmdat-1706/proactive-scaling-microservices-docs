@@ -24,7 +24,7 @@ The entire platform is managed through **GitOps (ArgoCD)** and provisioned via *
 - **AI-Driven Proactive Scaling** — KEDA polls a FastAPI prediction endpoint to pre-scale services before traffic spikes occur
 - **GitOps (ArgoCD App-of-Apps)** — Single bootstrap point for the entire infrastructure with automated synchronization. Kustomize manages `base`/`overlays` per environment: Prophet supports Dev/Prod, Boutique targets Production with Blue/Green
 - **Zero-Downtime CD** — Blue/Green deployment strategy powered by Argo Rollouts
-- **DevSecOps Pipeline** — GitHub Actions with Trivy vulnerability scanning, yamllint, kubeconform, Gitleaks, SAST and Flake8
+- **Quality gates & DevSecOps Pipeline** — GitHub Actions with Trivy vulnerability scanning, yamllint, kubeconform, Gitleaks, Bandit (SAST) and Flake8
 - **Zero Plaintext Secrets** — Bitnami Sealed Secrets with automated certificate retrieval and encryption via Ansible
 - **Full Observability & Alerting** — kube-prometheus-stack with custom Traefik RPS metrics, PrometheusRules, and automated Slack notifications for critical alerts
 
@@ -35,10 +35,16 @@ The entire platform is managed through **GitOps (ArgoCD)** and provisioned via *
 ## 📂 Repository Structure
 
 ```text
-├── .github/workflows/           # CI/CD GitHub Actions pipelines
+├── .github/
+│   ├── workflows/
+│   │   ├── ci-audit.yaml        # PR quality gates: Gitleaks, Bandit, yamllint, Kubeconform
+│   │   └── ci-ai-scaler.yaml    # AI Scaler CI: build, Trivy scan, push to GHCR, auto-tag Kustomize
+│   └── renovate.json            # Automated dependency update config
 ├── apps/
 │   ├── boutique/                # Google Online Boutique microservices (Kustomize)
 │   └── prophet/                 # AI Scaler (FastAPI, CronJobs, MLflow, models)
+├── docs/
+│   └── images/                  # Architecture & flow diagrams
 ├── infra/
 │   ├── ansible/                 # K3s & ArgoCD cluster bootstrap automation
 │   ├── argocd/                  # GitOps App-of-Apps definitions
@@ -55,6 +61,10 @@ The entire platform is managed through **GitOps (ArgoCD)** and provisioned via *
 - Ansible installed on your control machine
 - GitHub account with a PAT token for GHCR access
 - Slack Webhook URL for Alertmanager
+- **Passwordless Sudo**: Automated IaC execution requires the target user to have passwordless sudo enabled to prevent timeout issues during heavy load. Run this on all VMs before provisioning:
+  ```bash
+  echo "somt ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/somt
+  ```
 
 ### 1. Configure Inventory
 
@@ -102,73 +112,24 @@ k3s kubectl get pods -A
 
 Unlike traditional reactive scaling (which responds *after* a spike), this system continuously forecasts future traffic and pre-scales services *before* demand arrives.
 
-```mermaid
-graph TD
-    subgraph TRAFFIC ["1. Live Traffic"]
-        User(["Users / Load Generator"])
-        Ingress["Traefik Ingress"]
-    end
+![Proactive Scaling Flow](./docs/images/Proactive%20scaling.png)
 
-    subgraph OBSERVE ["2. Observability & Data Collection"]
-        Prometheus[("Prometheus")]
-        Alertmanager["Alertmanager\n(Slack Notifications)"]
-        DataIngest["Data Ingestion CronJob\n(Daily)"]
-        PV[("Shared Data Lake\n(Persistent Volume)")]
-    end
-
-    subgraph MLOPS ["3. MLOps Pipeline"]
-        Retrain["Model Retrain CronJob\n(Weekly)"]
-        MLflow["MLflow Model Registry"]
-        Prophet["Prophet Server\n(FastAPI /api/forecast)"]
-    end
-
-    subgraph SCALE ["4. Proactive Autoscaling"]
-        KEDA["KEDA Operator\n(metrics-api + CPU triggers)"]
-        HPA["Horizontal Pod Autoscaler"]
-        Pods["Microservice Pods"]
-    end
-
-    User -->|"HTTP Requests"| Ingress
-    Ingress -->|"Route to"| Pods
-    Ingress -..->|"Scrape RPS Metrics"| Prometheus
-    Prometheus -->|"Fire Alerts"| Alertmanager
-    Prometheus -->|"Query Historical Data"| DataIngest
-    DataIngest -->|"Append Dataset"| PV
-    PV -->|"Load Training Data"| Retrain
-    Retrain -->|"Register New Model"| MLflow
-    MLflow -->|"Load Latest Model"| Prophet
-    Prophet -->|"Expose Forecasted RPS"| KEDA
-    KEDA -->|"Manage Desired Replicas"| HPA
-    HPA -->|"Scale UP before traffic hits"| Pods
-```
-
-## 🗂️ AI Serving Infrastructure
+## 🗂️ AI & MLOps Infrastructure
 
 The AI forecasting component is treated as **just another workload** on the cluster — packaged, deployed, and lifecycle-managed entirely through Kubernetes primitives and GitOps.
 
-```mermaid
-graph LR
-    subgraph K8S ["Kubernetes Cluster (boutique namespace)"]
-        direction TB
-        CJ1["⏱ Data Ingestion CronJob\n(Daily)\nQueries Prometheus → appends CSV"]
-        CJ2["⏱ Model Retrain CronJob\n(Weekly)\nRetrains Prophet on latest CSV"]
-        PV[("PersistentVolume\nShared data & model storage")]
-        MLflow["MLflow Deployment\nModel version registry"]
-        Prophet["Prophet Deployment\nFastAPI · /api/forecast\nReturns predicted RPS"]
-    end
+![MLOps Pipeline](./docs/images/MLOps.png)
 
-    subgraph INFRA ["Infrastructure Layer"]
-        Prometheus[("Prometheus")]
-        KEDA["KEDA\nScaledObject · metrics-api trigger\npollInterval: 30s"]
-    end
+## 🔄 CI/CD Pipeline & GitOps Workflow
 
-    Prometheus --> |"Historical RPS data"| CJ1
-    CJ1 --> |"Append dataset"| PV
-    PV --> |"Load training data"| CJ2
-    CJ2 --> |"Save model artifact"| PV
-    CJ2 --> |"Log run & register version"| MLflow
-    Prophet -->|"GET /api/forecast\n→ predicted_rps for next 15 min"| KEDA
-```
+The full lifecycle is fully automated. Two GitHub Actions workflows handle quality gating and image delivery:
+
+- **`ci-audit.yaml`** — Triggered on every PR: runs Gitleaks (secret scanning), Bandit (SAST), yamllint, and Kubeconform to enforce code quality before merge.
+- **`ci-ai-scaler.yaml`** — Triggered on push to `dev`/`main`: builds Docker image, runs Trivy vulnerability scan, pushes to GHCR, and auto-commits the new image tag into the Kustomize overlay for ArgoCD to detect.
+
+ArgoCD then detects configuration drift and applies changes using Blue/Green deployments for mission-critical services via Argo Rollouts.
+
+![CI/CD Pipeline](./docs/images/CI-CD.png)
 
 ## 🔐 Security Design
 
@@ -183,50 +144,6 @@ graph LR
 | **SAST** | Bandit scans Python source on every push — blocks insecure patterns |
 | **Container Vulnerabilities** | Trivy blocks `CRITICAL`/`HIGH` CVEs before image is pushed |
 | **Code Quality** | Flake8 (Python syntax) + yamllint + Kubeconform (K8s schemas) |
-
-## 🔄 CI/CD Pipeline & GitOps Workflow
-
-The full lifecycle is fully automated. The CI pipeline checks PRs and builds images on merge, updating Kustomize Overlays. ArgoCD then detects drift and applies changes using Blue/Green deployments for mission-critical services.
-
-```mermaid
-graph TD
-    Dev(["Developer / Admin"])
-
-    subgraph BOOTSTRAP ["Phase 1: Infrastructure Bootstrap"]
-        Ansible["Ansible Playbook\n(site.yaml)"]
-        K3s["K3s Cluster\n+ ArgoCD v3.4.3"]
-    end
-
-    subgraph CI ["Phase 2: CI Pipeline (GitHub Actions)"]
-        Code["GitHub - Source Code"]
-        Audit["Audit Job\nGitleaks · Bandit · yamllint\nKubeconform"]
-        Build["Build & Push Job\nDockerBuildx · Trivy scan"]
-        GHCR["GHCR\nImage Registry"]
-        GitOps["Auto-commit\nKustomize image tag update"]
-    end
-
-    subgraph CD ["Phase 3: CD Pipeline (GitOps)"]
-        Manifests["GitHub - K8s Manifests\n(Kustomize dev/prod overlays)"]
-        Argo["ArgoCD Controller\n(App-of-Apps)"]
-        Rollouts["Argo Rollouts\n(Blue/Green · manual promotion)"]
-        Pods["Microservices Pods"]
-    end
-
-    Dev -->|"1. ansible-playbook site.yaml"| Ansible
-    Ansible -->|"2. Provision VMs + bootstrap"| K3s
-
-    Dev -->|"3. git push / PR"| Code
-    Code -->|"4. Trigger on push/PR"| Audit
-    Audit -->|"5. Pass"| Build
-    Build -->|"6. Push image"| GHCR
-    Build -->|"7. Commit new tag"| GitOps
-    GitOps --> Manifests
-
-    Argo -->|"8. Watch for drift"| Manifests
-    Argo -->|"9. Sync"| Rollouts
-    Rollouts -->|"10. Blue/Green deploy"| Pods
-    Pods -..->|"11. Pull image"| GHCR
-```
 
 ## 📊 Monitoring Access
 
@@ -256,13 +173,41 @@ graph TD
 | **Ingress** | Traefik (K3s built-in) | — |
 | **Load Testing** | K6 | — |
 
+## 📈 Results — Reactive vs. Proactive Scaling
+
+Load testing was performed using Grafana K6 with an identical `ramping-vus` spike scenario (10 → 100 → **2000 VUs in 15s** → hold 3 min → ramp down). Each scenario was run **3 times** and averaged.
+
+| Metric | Environment A (Reactive · CPU HPA) | Environment B (Proactive · KEDA + AI) | Improvement |
+|--------|--------------------------------------|----------------------------------------|-------------|
+| **Error Rate** | 5.55% | **0.00%** | ✅ 100% errors eliminated |
+| **Throughput (avg RPS)** | 171.73 req/s | **220.69 req/s** | ✅ +28.51% |
+| **Latency p(95)** | 18.66 s | **4.57 s** | ✅ 4.1× faster |
+| **Avg Response Time** | 640.99 ms | **88.91 ms** | ✅ 7.2× faster |
+| **Stability** | Degrading over time | Perfectly stable | ✅ Zero collapse |
+
+### 💡 Key Insight — The TCP Backlog Bottleneck
+
+The reactive system collapsed with **502/503 errors while CPU remained below 200 millicores**. The root cause was not resource exhaustion — it was **TCP Socket Listen Backlog saturation**.
+
+When 2,000 virtual users slammed in over 15 seconds, the single pod's TCP connection queue was immediately overwhelmed. Traditional HPA was blind to this because it only watches CPU, which hadn't risen yet. This "Cold-start penalty" cascaded into a full system collapse.
+
+Proactive Scaling solved this by pre-provisioning pods **before** traffic arrived. With pods scaled up in advance:
+
+```
+
+```
+
+This buffer absorbed the entire spike with **zero errors**.
+
 ## 📝 Known Limitations
+
 
 - **No TLS:** `.local` domains use HTTP only (cert-manager + Let's Encrypt would be the production path)
 - **No NetworkPolicy:** All pods can communicate freely within the cluster namespace
 - **Frozen MLOps Loop:** The Retrain CronJob demonstrates the MLOps architecture end-to-end, but the AI Server deliberately uses a frozen pre-trained model. The load generator (Boutique's synthetic traffic) lacks real-world seasonality and sufficient volume to produce a model that improves on retraining — this is a known data constraint of the lab environment, not a gap in the pipeline design.
 - **Static `.local` DNS:** Requires a manual `/etc/hosts` entry on the client machine; a proper DNS resolver (e.g., CoreDNS external or a wildcard entry) would remove this step.
+- **TCP Listen Backlog Bottleneck:** Traefik's default TCP listen backlog (128 connections/pod) creates a network-level concurrency ceiling under extreme spike loads. This is the primary reason horizontal scaling (more pods) improves capacity even when CPU utilization remains low — each additional pod contributes an independent connection queue (6 pods × 128 = 768 concurrent connections). In production, a proper L4/L7 Load Balancer with tuned backlog settings would handle connection distribution more efficiently and raise this ceiling significantly.
 
 ---
 
-*This project was developed as a Major Project (Đồ án chuyên ngành) at UIT, focusing on modern DevOps Engineering practices — proactive AI-driven scaling, GitOps, DevSecOps, and observability abilities.*
+*This project was developed as a Major Project (Đồ án chuyên ngành) at UIT, focusing on modern DevOps Engineering practices — proactive AI-driven scaling, GitOps, DevSecOps, and observability.*
